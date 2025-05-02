@@ -1,23 +1,26 @@
-window.MiniAppSDK = (function () {
-  const pending = new Map();
-  let messageCounter = 0;
+class MiniAppSDK {
+  constructor(options = {}) {
+    this.pending = new Map();
+    this.messageCounter = 0;
+    this.TRUSTED_ORIGIN = options.origin || null;
 
-  // ดึง origin จาก query string
-  function getOriginFromScript() {
-    const currentScript =
-      document.currentScript ||
-      Array.from(document.getElementsByTagName("script")).pop();
-    const url = new URL(currentScript.src);
-    return url.searchParams.get("origin");
+    if (!this.TRUSTED_ORIGIN) {
+      console.warn(
+        'MiniAppSDK: origin is not specified! Using "*" (not secure)'
+      );
+    }
+
+    this.initialize();
   }
 
-  const TRUSTED_ORIGIN = getOriginFromScript();
-  if (!TRUSTED_ORIGIN) {
-    console.warn('MiniAppSDK: origin is not specified! Using "*" (not secure)');
+  initialize() {
+    if (typeof window !== "undefined") {
+      window.addEventListener("message", this.handleMessage.bind(this));
+    }
   }
 
-  function send(action, payload) {
-    const messageId = `miniapp-${Date.now()}-${messageCounter++}`;
+  send(action, payload) {
+    const messageId = `miniapp-${Date.now()}-${this.messageCounter++}`;
     const message = {
       action,
       payload,
@@ -25,26 +28,29 @@ window.MiniAppSDK = (function () {
     };
 
     return new Promise((resolve, reject) => {
-      pending.set(messageId, { resolve, reject });
+      this.pending.set(messageId, { resolve, reject });
 
-      console.log("TRUSTED_ORIGIN", TRUSTED_ORIGIN);
-      window.parent.postMessage(message, TRUSTED_ORIGIN || "*");
+      if (typeof window !== "undefined" && window.parent) {
+        window.parent.postMessage(message, this.TRUSTED_ORIGIN || "*");
+      } else {
+        reject(new Error("Window context not available"));
+      }
 
-      // timeout fallback
+      // Timeout fallback
       setTimeout(() => {
-        if (pending.has(messageId)) {
-          pending.delete(messageId);
+        if (this.pending.has(messageId)) {
+          this.pending.delete(messageId);
           reject(new Error(`Timeout waiting for response [${action}]`));
         }
       }, 10000); // 10s
     });
   }
 
-  function handleMessage(event) {
+  handleMessage(event) {
     const data = event.data;
 
-    // ป้องกัน origin ปลอม
-    if (TRUSTED_ORIGIN && event.origin !== TRUSTED_ORIGIN) {
+    // Prevent messages from untrusted origins
+    if (this.TRUSTED_ORIGIN && event.origin !== this.TRUSTED_ORIGIN) {
       console.warn(
         `MiniAppSDK: Rejected message from untrusted origin: ${event.origin}`
       );
@@ -53,10 +59,10 @@ window.MiniAppSDK = (function () {
 
     if (!data || data.type !== "response" || !data.messageId) return;
 
-    const handler = pending.get(data.messageId);
+    const handler = this.pending.get(data.messageId);
     if (!handler) return;
 
-    pending.delete(data.messageId);
+    this.pending.delete(data.messageId);
 
     if (data.error) {
       handler.reject(new Error(data.error));
@@ -65,42 +71,42 @@ window.MiniAppSDK = (function () {
     }
   }
 
-  window.addEventListener("message", handleMessage);
-
-  async function getCurrentUser() {
-    return await send("get-current-user");
+  async getCurrentUser() {
+    this.currentUser = await this.send("get-current-user");
+    return this.currentUser;
   }
 
-  async function getWallet() {
-    return await send("get-wallet");
+  async getWallet() {
+    this.wallet = await this.send("get-wallet");
+    return this.wallet;
   }
 
-  async function addBalance({ amount }) {
-    return await send("add-balance", { amount });
+  async addBalance({ amount }) {
+    return await this.send("add-balance", { amount });
   }
 
-  async function reduceBalance({ amount }) {
-    return await send("reduce-balance", { amount });
+  async reduceBalance({ amount }) {
+    return await this.send("reduce-balance", { amount });
   }
 
-  async function addFreeCredit({ amount }) {
-    return await send("add-free-credit", { amount });
+  async addFreeCredit({ amount }) {
+    return await this.send("add-free-credit", { amount });
   }
 
-  async function reduceFreeCredit({ amount }) {
-    return await send("reduce-free-credit", { amount });
+  async reduceFreeCredit({ amount }) {
+    return await this.send("reduce-free-credit", { amount });
   }
 
-  async function getGameTransaction({ start, limit, order = "desc" }) {
-    return await send("get-game-transaction", {
+  async getGameTransaction({ start, limit, order = "desc" }) {
+    return await this.send("get-game-transaction", {
       start,
       limit,
       order,
     });
   }
 
-  async function getPaymentTransaction({ type, start, limit, order = "desc" }) {
-    return await send("get-payment-transaction", {
+  async getPaymentTransaction({ type, start, limit, order = "desc" }) {
+    return await this.send("get-payment-transaction", {
       type,
       start,
       limit,
@@ -108,23 +114,14 @@ window.MiniAppSDK = (function () {
     });
   }
 
-  async function getUserPromotions({ start, limit, order = "desc" }) {
-    return await send("get-user-promotion", {
+  async getUserPromotions({ start, limit, order = "desc" }) {
+    return await this.send("get-user-promotion", {
       start,
       limit,
       order,
     });
   }
+}
 
-  return {
-    getCurrentUser,
-    getWallet,
-    addBalance,
-    reduceBalance,
-    addFreeCredit,
-    reduceFreeCredit,
-    getGameTransaction,
-    getPaymentTransaction,
-    getUserPromotions,
-  };
-})();
+// ไม่ต้อง attach เข้า window
+export default MiniAppSDK; // Export แบบ ES Module
